@@ -251,8 +251,7 @@ setInterval(() => {
   const now = new Date();
 
   // ✅ 转成缅甸时间（+6小时30分钟）
-  now.setHours(now.getHours() + 6);
-  now.setMinutes(now.getMinutes() + 30);
+ now.setMinutes(now.getMinutes() + 390);
 
   const hour = now.getHours();
   const minute = now.getMinutes();
