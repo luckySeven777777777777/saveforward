@@ -4,6 +4,7 @@ import fs from "fs";
 
 const app = express();
 app.use(express.json());
+const LATE_GROUP_ID = process.env.LATE_GROUP_ID;
 
 // ====== 环境变量 ======
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -152,8 +153,41 @@ app.post("/", async (req, res) => {
     const month = today.slice(0, 7);
 
     let stats = readData();
+// ====== 加班未完成提醒 ======
+const userId = msg.from.id.toString();
+const overtime = stats["overtime"] || {};
+const userOvertime = overtime[userId];
 
-    const userId = msg.from.id.toString();
+const textMsg = msg.text || "";
+const lower = textMsg.toLowerCase();
+
+if (
+  userOvertime &&
+  (
+    textMsg.includes("Check Out") ||
+    lower === "bye" ||
+    lower.includes("bye bye")
+  )
+) {
+  const now = new Date();
+  const currentHour = now.getHours();
+  const currentMinute = now.getMinutes();
+
+  let requiredMinutes = 0;
+
+  if (userOvertime.streak === 1) requiredMinutes = 30;
+  else if (userOvertime.streak === 2) requiredMinutes = 60;
+  else requiredMinutes = 120;
+
+  const start = 12 * 60;
+  const nowMinutes = currentHour * 60 + currentMinute;
+
+  if (nowMinutes < start + requiredMinutes) {
+    await sendMessage(chatId,
+      "⚠ You haven't finished your overtime work yet, please continue working overtime ⚠"
+    );
+  }
+}
     const userName =
       msg.from.username ||
       `${msg.from.first_name || ""} ${msg.from.last_name || ""}`.trim();
@@ -219,10 +253,66 @@ setInterval(() => {
   const today = getDate(0);
 
   // ✅ فقط 中午 12:00
-  if (hour === 12 && minute === 0 && lastRunNoon !== today) {
-    console.log("🌞 中午检查未转发用户...");
-    checkNoForwardUsers();
+if (hour === 12 && minute === 0 && lastRunNoon !== today) {
+  console.log("🌞 中午检查未转发用户...");
+  checkNoForwardUsers();
 
-    lastRunNoon = today;
-  }
-}, 60000);
+  // ✅ 必须放这里！！
+  setTimeout(async () => {
+    let stats = readData();
+    const today = getDate(0);
+    const yesterday = getDate(-1);
+    const month = today.slice(0, 7);
+
+    if (!stats[month]) return;
+
+    if (!stats["overtime"]) stats["overtime"] = {};
+
+    let notifyList = [];
+
+    for (let userId in stats[month]) {
+      const todayCount = stats[today]?.[userId]?.count || 0;
+
+      if (todayCount !== 0) continue;
+
+      const userName = stats[month][userId].name;
+
+      const last = stats["overtime"][userId];
+
+      let streak = 1;
+
+      if (last && last.lastDate === yesterday) {
+        streak = last.streak + 1;
+      }
+
+      if (!last || last.lastDate !== yesterday) {
+        streak = 1;
+      }
+
+      stats["overtime"][userId] = {
+        streak,
+        lastDate: today
+      };
+
+      let overtimeText = "";
+      if (streak === 1) overtimeText = "加班30分钟";
+      else if (streak === 2) overtimeText = "加班1小时";
+      else overtimeText = "加班2小时";
+
+      notifyList.push(`${userName}（第${streak}次）${overtimeText}`);
+    }
+
+    writeData(stats);
+
+    if (notifyList.length > 0) {
+      await sendMessage(LATE_GROUP_ID,
+        "🚨 加班通知\n\n" +
+        notifyList.join("\n") +
+        "\n\n⚠ 连续才累计，断一天重置"
+      );
+    }
+
+  }, 5000);
+
+  lastRunNoon = today;
+}
