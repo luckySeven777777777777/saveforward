@@ -316,3 +316,4 @@ if (hour === 12 && minute === 0 && lastRunNoon !== today) {
 
   lastRunNoon = today;
 }
+}, 60000); // 每分钟检查一次
