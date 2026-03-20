@@ -39,6 +39,10 @@ function writeData(data) {
 // ====== 获取日期 ======
 function getDate(offset = 0) {
   const d = new Date();
+
+  // ✅ 一次性加 6小时30分钟（= 390分钟）
+  d.setMinutes(d.getMinutes() + 390);
+
   d.setDate(d.getDate() + offset);
 
   const year = d.getFullYear();
@@ -47,7 +51,6 @@ function getDate(offset = 0) {
 
   return `${year}-${month}-${day}`;
 }
-
 // ====== 发送消息 ======
 async function sendMessage(chatId, text) {
   try {
@@ -247,13 +250,18 @@ let lastRunNoon = "";
 setInterval(() => {
   const now = new Date();
 
+  // ✅ 转成缅甸时间（+6小时30分钟）
+  now.setHours(now.getHours() + 6);
+  now.setMinutes(now.getMinutes() + 30);
+
   const hour = now.getHours();
   const minute = now.getMinutes();
 
   const today = getDate(0);
 
+
   // ✅ فقط 中午 12:00
-if (hour === 12 && minute === 0 && lastRunNoon !== today) {
+if (hour === 12 && minute <= 1 && lastRunNoon !== today) {
   console.log("🌞 中午检查未转发用户...");
   checkNoForwardUsers();
 
