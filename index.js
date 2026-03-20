@@ -39,7 +39,12 @@ function writeData(data) {
 function getDate(offset = 0) {
   const d = new Date();
   d.setDate(d.getDate() + offset);
-  return d.toISOString().slice(0, 10);
+
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 }
 
 // ====== 发送消息 ======
@@ -66,7 +71,62 @@ async function sendMessage(chatId, text) {
     console.error("❌ sendMessage 报错:", e);
   }
 }
+// ====== 检查未转发用户 ======
+async function checkNoForwardUsers() {
+  const today = getDate(0);
+  const month = today.slice(0, 7);
 
+  let stats = readData();
+  if (!stats[month]) return;
+
+  // ✅ 获取管理员列表
+  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getChatAdministrators?chat_id=${GROUP_ID}`);
+  const data = await res.json();
+
+  let adminIds = [];
+  if (data.ok) {
+    adminIds = data.result.map(a => a.user.id.toString());
+  }
+
+  let noForwardUsers = [];
+
+  for (let userId in stats[month]) {
+    const user = stats[month][userId];
+
+    // ❗ 跳过管理员
+    if (adminIds.includes(userId)) continue;
+
+    const todayCount = stats[today]?.[userId]?.count || 0;
+
+    if (todayCount === 0) {
+      noForwardUsers.push({
+        id: userId,
+        name: user.name
+      });
+    }
+  }
+
+  if (noForwardUsers.length === 0) return;
+
+  // 分批发送
+  const chunkSize = 10;
+
+  for (let i = 0; i < noForwardUsers.length; i += chunkSize) {
+    const chunk = noForwardUsers.slice(i, i + chunkSize);
+
+    let mentions = chunk
+      .map(u => `<a href="tg://user?id=${u.id}">${u.name}</a>`)
+      .join(" ");
+
+    const text =
+      `📢 转发任务提醒\n\n` +
+      `👤 用户：${mentions}\n` +
+      `📅 日期：${today}\n` +
+      `🌅 今日： No Effective`;
+
+    await sendMessage(GROUP_ID, text);
+  }
+}
 // ====== webhook 测试 ======
 app.get("/", (req, res) => {
   res.send("🤖 Bot is running");
@@ -147,3 +207,22 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+// ====== 每天中午 12:00 检查 ======
+let lastRunNoon = "";
+
+setInterval(() => {
+  const now = new Date();
+
+  const hour = now.getHours();
+  const minute = now.getMinutes();
+
+  const today = getDate(0);
+
+  // ✅ فقط 中午 12:00
+  if (hour === 12 && minute === 0 && lastRunNoon !== today) {
+    console.log("🌞 中午检查未转发用户...");
+    checkNoForwardUsers();
+
+    lastRunNoon = today;
+  }
+}, 60000);
