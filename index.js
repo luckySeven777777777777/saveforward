@@ -78,6 +78,7 @@ async function sendMessage(chatId, text) {
 // ====== 检查未转发用户 ======
 async function checkNoForwardUsers() {
   const today = getDate(0);
+  const yesterday = getDate(-1); // 获取昨天日期
   const month = today.slice(0, 7);
 
   let stats = readData();
@@ -92,23 +93,24 @@ async function checkNoForwardUsers() {
     adminIds = data.result.map(a => a.user.id.toString());
   }
 
-  let noForwardUsers = [];
+let noForwardUsers = [];
 
-  for (let userId in stats[month]) {
-    const user = stats[month][userId];
+  // ====== 修改后的循环逻辑 ======
+for (let userId in stats[month]) {
+  const user = stats[month][userId];
+  if (adminIds.includes(userId)) continue;
 
-    // ❗ 跳过管理员
-    if (adminIds.includes(userId)) continue;
+  const todayCount = stats[today]?.[userId]?.count || 0;
+  const yesterdayCount = stats[yesterday]?.[userId]?.count || 0;
 
-    const todayCount = stats[today]?.[userId]?.count || 0;
-
-    if (todayCount === 0) {
-      noForwardUsers.push({
-        id: userId,
-        name: user.name
-      });
-    }
+  // 关键修改：如果昨天和今天加起来等于 0，才抓出来
+  if ((todayCount + yesterdayCount) === 0) {
+    noForwardUsers.push({
+      id: userId,
+      name: user.name
+    });
   }
+}
 
   if (noForwardUsers.length === 0) return;
 
@@ -244,83 +246,76 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
-// ====== 每天中午 12:00 检查 ======
+// ====== 每天定时检查 ======
 let lastRunNoon = "";
 
 setInterval(() => {
   const now = new Date();
-
   // ✅ 转成缅甸时间（+6小时30分钟）
- now.setMinutes(now.getMinutes() + 390);
+  now.setMinutes(now.getMinutes() + 390);
 
   const hour = now.getHours();
   const minute = now.getMinutes();
-
   const today = getDate(0);
 
+  // ✅ 晚上 19:00 触发
+  if (hour === 19 && minute <= 1 && lastRunNoon !== today) {
+    console.log("🌙 晚间检查任务开始...");
+    
+    // 1. 先执行点名提醒 (这里你已经改好了跨天逻辑)
+    checkNoForwardUsers(); 
 
-  // ✅ فقط 中午 12:00
-if (hour === 12 && minute <= 1 && lastRunNoon !== today) {
-  console.log("🌞 中午检查未转发用户...");
-  checkNoForwardUsers();
+    // 2. 5秒后计算加班名单
+    setTimeout(async () => {
+      let stats = readData();
+      const yesterday = getDate(-1);
+      const month = today.slice(0, 7);
 
-  // ✅ 必须放这里！！
-  setTimeout(async () => {
-    let stats = readData();
-    const today = getDate(0);
-    const yesterday = getDate(-1);
-    const month = today.slice(0, 7);
+      if (!stats[month]) return;
+      if (!stats["overtime"]) stats["overtime"] = {};
 
-    if (!stats[month]) return;
+      let notifyList = [];
 
-    if (!stats["overtime"]) stats["overtime"] = {};
+      for (let userId in stats[month]) {
+        // ⚠️ 关键修正：这里必须和 checkNoForwardUsers 的逻辑一致
+        const todayCount = stats[today]?.[userId]?.count || 0;
+        const yesterdayCount = stats[yesterday]?.[userId]?.count || 0;
 
-    let notifyList = [];
+        // ✅ 只有 [昨天+今天] 总数等于 0 的人才算没完成，才需要加班
+        if ((todayCount + yesterdayCount) !== 0) continue;
 
-    for (let userId in stats[month]) {
-      const todayCount = stats[today]?.[userId]?.count || 0;
+        const userName = stats[month][userId].name;
+        const last = stats["overtime"][userId];
+        let streak = 1;
 
-      if (todayCount !== 0) continue;
+        if (last && last.lastDate === yesterday) {
+          streak = last.streak + 1;
+        }
 
-      const userName = stats[month][userId].name;
+        stats["overtime"][userId] = {
+          streak,
+          lastDate: today
+        };
 
-      const last = stats["overtime"][userId];
+        let overtimeText = "";
+        if (streak === 1) overtimeText = "加班30分钟";
+        else if (streak === 2) overtimeText = "加班1小时";
+        else overtimeText = "加班2小时";
 
-      let streak = 1;
-
-      if (last && last.lastDate === yesterday) {
-        streak = last.streak + 1;
+        notifyList.push(`${userName}（第${streak}次）${overtimeText}`);
       }
 
-      if (!last || last.lastDate !== yesterday) {
-        streak = 1;
+      writeData(stats);
+
+      if (notifyList.length > 0) {
+        await sendMessage(LATE_GROUP_ID,
+          "🚨 加班通知\n\n" +
+          notifyList.join("\n") +
+          "\n\n⚠ 连续才累计，断一天重置"
+        );
       }
+    }, 5000);
 
-      stats["overtime"][userId] = {
-        streak,
-        lastDate: today
-      };
-
-      let overtimeText = "";
-      if (streak === 1) overtimeText = "加班30分钟";
-      else if (streak === 2) overtimeText = "加班1小时";
-      else overtimeText = "加班2小时";
-
-      notifyList.push(`${userName}（第${streak}次）${overtimeText}`);
-    }
-
-    writeData(stats);
-
-    if (notifyList.length > 0) {
-      await sendMessage(LATE_GROUP_ID,
-        "🚨 加班通知\n\n" +
-        notifyList.join("\n") +
-        "\n\n⚠ 连续才累计，断一天重置"
-      );
-    }
-
-  }, 5000);
-
-  lastRunNoon = today;
-}
-}, 60000); // 每分钟检查一次
+    lastRunNoon = today;
+  }
+}, 60000);
