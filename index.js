@@ -251,16 +251,16 @@ let lastRunNoon = "";
 
 setInterval(() => {
   const now = new Date();
-  // ✅ 转成缅甸时间（+6小时30分钟）
+  // ✅ 保持你的时区偏移：转成缅甸时间（+6小时30分钟）
   now.setMinutes(now.getMinutes() + 390);
 
   const hour = now.getHours();
   const minute = now.getMinutes();
   const today = getDate(0);
 
-  // ✅ 晚上 19:00 触发
-  if (hour === 19 && minute <= 1 && lastRunNoon !== today) {
-    console.log("🌙 晚间检查任务开始...");
+  // ✅ 修改此处：从 19 改为 12
+  if (hour === 12 && minute <= 1 && lastRunNoon !== today) {
+    console.log("☀️ 中午检查任务开始..."); // 修改日志描述
     
     // 1. 先执行点名提醒 (这里你已经改好了跨天逻辑)
     checkNoForwardUsers(); 
