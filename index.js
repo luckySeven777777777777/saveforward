@@ -197,16 +197,22 @@ if (
       msg.from.username ||
       `${msg.from.first_name || ""} ${msg.from.last_name || ""}`.trim();
 
-    // 初始化
-    if (!stats[today]) stats[today] = {};
+// ✅ 安全初始化：如果月份或今天不存在，才创建空对象
     if (!stats[month]) stats[month] = {};
+    if (!stats[today]) stats[today] = {};
 
-    if (!stats[today][userId]) {
-      stats[today][userId] = { name: userName, count: 0 };
-    }
-
+    // ✅ 关键修改：如果本月已有该用户记录，只更新名字，不重置 count
     if (!stats[month][userId]) {
       stats[month][userId] = { name: userName, count: 0 };
+    } else {
+      stats[month][userId].name = userName; // 保持名字最新
+    }
+
+    // ✅ 今日统计同理
+    if (!stats[today][userId]) {
+      stats[today][userId] = { name: userName, count: 0 };
+    } else {
+      stats[today][userId].name = userName;
     }
 
 // ====== 只统计转发 ======
@@ -278,26 +284,25 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+
 // ====== 每天定时检查 ======
 let lastRunNoon = "";
 
 setInterval(() => {
   const now = new Date();
-  // ✅ 保持你的时区偏移：转成缅甸时间（+6小时30分钟）
-  now.setMinutes(now.getMinutes() + 390);
+  now.setMinutes(now.getMinutes() + 390); // 转换缅甸时间
 
   const hour = now.getHours();
   const minute = now.getMinutes();
+  const day = now.getDate(); // 获取今天是几号
   const today = getDate(0);
 
-  // ✅ 修改此处：从 19 改为 12
-  if (hour === 12 && minute <= 1 && lastRunNoon !== today) {
-    console.log("☀️ 中午检查任务开始..."); // 修改日志描述
+  // 1. 正常的每日中午检查（12:00）
+  if (hour === 12 && minute === 0 && lastRunNoon !== today) {
+    console.log("☀️ 执行每日转发与加班检查...");
     
-    // 1. 先执行点名提醒 (这里你已经改好了跨天逻辑)
     checkNoForwardUsers(); 
 
-    // 2. 5秒后计算加班名单
     setTimeout(async () => {
       let stats = readData();
       const yesterday = getDate(-1);
@@ -309,45 +314,34 @@ setInterval(() => {
       let notifyList = [];
 
       for (let userId in stats[month]) {
-        // ⚠️ 关键修正：这里必须和 checkNoForwardUsers 的逻辑一致
         const todayCount = stats[today]?.[userId]?.count || 0;
         const yesterdayCount = stats[yesterday]?.[userId]?.count || 0;
 
-        // ✅ 只有 [昨天+今天] 总数等于 0 的人才算没完成，才需要加班
         if ((todayCount + yesterdayCount) !== 0) continue;
 
         const userName = stats[month][userId].name;
         const last = stats["overtime"][userId];
-        let streak = 1;
+        let streak = (last && last.lastDate === yesterday) ? last.streak + 1 : 1;
 
-        if (last && last.lastDate === yesterday) {
-          streak = last.streak + 1;
-        }
+        stats["overtime"][userId] = { streak, lastDate: today };
 
-        stats["overtime"][userId] = {
-          streak,
-          lastDate: today
-        };
-
-        let overtimeText = "";
-        if (streak === 1) overtimeText = "加班30分钟";
-        else if (streak === 2) overtimeText = "加班1小时";
-        else overtimeText = "加班2小时";
-
-        notifyList.push(`${userName}（第${streak}次）${overtimeText}`);
+        let otText = streak === 1 ? "加班30分钟" : (streak === 2 ? "加班1小时" : "加班2小时");
+        notifyList.push(`${userName}（第${streak}次）${otText}`);
       }
 
       writeData(stats);
 
       if (notifyList.length > 0) {
-        await sendMessage(LATE_GROUP_ID,
-          "🚨 加班通知\n\n" +
-          notifyList.join("\n") +
-          "\n\n⚠ 连续才累计，断一天重置"
-        );
+        await sendMessage(LATE_GROUP_ID, "🚨 加班通知\n\n" + notifyList.join("\n") + "\n\n⚠ 连续才累计，断一天重置");
       }
     }, 5000);
 
     lastRunNoon = today;
+  }
+
+  // 2. ✅ 每月 1 号凌晨的静默处理（可选）
+  if (day === 1 && hour === 0 && minute === 1) {
+    // 此时 getDate(0) 会返回 "2026-04-01"，主逻辑会自动开始记录新月份，无需手动删数据
+    console.log("📅 跨月检测：新月份统计已自动开启");
   }
 }, 60000);
