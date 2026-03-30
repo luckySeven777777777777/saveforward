@@ -77,8 +77,23 @@ async function sendMessage(chatId, text) {
 }
 // ====== 检查未转发用户 ======
 async function checkNoForwardUsers() {
-  const today = getDate(0);
-  const yesterday = getDate(-1); // 获取昨天日期
+  // ✅ 强制确保获取的是缅甸时间的今天和昨天
+  const now = new Date();
+  now.setMinutes(now.getMinutes() + 390); // 缅甸偏移
+  
+  const todayObj = new Date(now);
+  const yesterdayObj = new Date(now);
+  yesterdayObj.setDate(yesterdayObj.getDate() - 1);
+
+  const format = (d) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const today = format(todayObj);
+  const yesterday = format(yesterdayObj);
   const month = today.slice(0, 7);
 
   let stats = readData();
