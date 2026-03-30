@@ -209,30 +209,62 @@ if (
       stats[month][userId] = { name: userName, count: 0 };
     }
 
-    // ====== 只统计转发 ======
+// ====== 只统计转发 ======
     if (msg.forward_date) {
+      // 生成消息指纹：原频道ID + 原消息ID (如果是匿名转发，则使用 forward_date)
+      const msgFingerprint = msg.forward_from_chat 
+        ? `${msg.forward_from_chat.id}_${msg.forward_from_message_id}`
+        : `anon_${msg.forward_date}`;
+
+      // 初始化全局查重库
+      if (!stats["history"]) stats["history"] = {};
+
+      // 检查是否已存在
+      if (stats["history"][msgFingerprint]) {
+        const record = stats["history"][msgFingerprint];
+        const prevDate = new Date(record.timestamp);
+        // 格式化时间为：2024-05-20 14:30:05
+        const timeStr = prevDate.toLocaleString('en-GB', { timeZone: 'Asia/Yangon' });
+
+        const warningText = 
+          `⚠ <b>Duplicate Forward Detected</b>\n\n` +
+          `This message was already forwarded by:\n` +
+          `👤 <b>User:</b> ${record.userName}\n` +
+          `⏰ <b>Time:</b> ${timeStr}\n\n` +
+          `<i>Please do not forward the same message twice.</i>`;
+
+        await sendMessage(chatId, warningText);
+        return res.send("ok");
+      }
+
+      // 如果是新转发，记录下来
       stats[today][userId].count += 1;
       stats[month][userId].count += 1;
+      
+      // 存入查重库
+      stats["history"][msgFingerprint] = {
+        userId: userId,
+        userName: userName,
+        timestamp: Date.now()
+      };
 
       writeData(stats);
 
       const todayCount = stats[today][userId].count;
-      const yesterdayCount =
-        stats[yesterday]?.[userId]?.count || 0;
+      const yesterdayCount = stats[yesterday]?.[userId]?.count || 0;
       const monthCount = stats[month][userId].count;
 
       const userTag = `${userName} (${userId})`;
 
       const text =
-        `👤 用户：${userTag}\n` +
-        `📅 日期：${today}\n` +
-        `🌅 今日：${todayCount}\n` +
-        `🌃 昨日：${yesterdayCount}\n` +
-        `🧮 本月：${monthCount}`;
+        `👤 User: ${userTag}\n` +
+        `📅 Date: ${today}\n` +
+        `🌅 Today: ${todayCount}\n` +
+        `🌃 Yesterday: ${yesterdayCount}\n` +
+        `🧮 Month: ${monthCount}`;
 
       await sendMessage(chatId, text);
     }
-
     res.send("ok");
   } catch (e) {
     console.error("❌ 主逻辑报错:", e);
