@@ -77,68 +77,57 @@ async function sendMessage(chatId, text) {
 }
 // ====== 检查未转发用户 ======
 async function checkNoForwardUsers() {
-  // ✅ 强制确保获取的是缅甸时间的今天和昨天
   const now = new Date();
-  now.setMinutes(now.getMinutes() + 390); // 缅甸偏移
+  // 转换为缅甸时间进行计算
+  const mmNow = new Date(now.getTime() + 390 * 60000); 
   
-  const todayObj = new Date(now);
-  const yesterdayObj = new Date(now);
-  yesterdayObj.setDate(yesterdayObj.getDate() - 1);
+  // 1. 计算昨天 18:30 的时间戳
+  const yesterday1830 = new Date(mmNow);
+  yesterday1830.setDate(yesterday1830.getDate() - 1);
+  yesterday1830.setHours(18, 30, 0, 0);
+  const startTime = yesterday1830.getTime();
 
-  const format = (d) => {
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  };
-
-  const today = format(todayObj);
-  const yesterday = format(yesterdayObj);
+  const today = getDate(0);
   const month = today.slice(0, 7);
 
   let stats = readData();
   if (!stats[month]) return;
 
-  // ✅ 获取管理员列表
+  // 获取管理员（跳过管理员）
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getChatAdministrators?chat_id=${GROUP_ID}`);
-  const data = await res.json();
+  const adminData = await res.json();
+  let adminIds = adminData.ok ? adminData.result.map(a => a.user.id.toString()) : [];
 
-  let adminIds = [];
-  if (data.ok) {
-    adminIds = data.result.map(a => a.user.id.toString());
+  let noForwardUsers = [];
+  const history = stats["history"] || {};
+
+  // 遍历本月所有活跃用户
+  for (let userId in stats[month]) {
+    if (adminIds.includes(userId)) continue;
+
+    // 【核心逻辑】：在 history 中寻找该用户在昨天 18:30 之后的转发记录
+    const hasForwarded = Object.values(history).some(record => 
+      record.userId === userId && record.timestamp >= startTime
+    );
+
+    // 如果在此期间没有任何记录，则加入未转发名单
+    if (!hasForwarded) {
+      noForwardUsers.push({
+        id: userId,
+        name: stats[month][userId].name
+      });
+    }
   }
-
-let noForwardUsers = [];
-
-  // ====== 修改后的循环逻辑 ======
-for (let userId in stats[month]) {
-  const user = stats[month][userId];
-  if (adminIds.includes(userId)) continue;
-
-  const todayCount = stats[today]?.[userId]?.count || 0;
-  const yesterdayCount = stats[yesterday]?.[userId]?.count || 0;
-
-  // 关键修改：如果昨天和今天加起来等于 0，才抓出来
-  if ((todayCount + yesterdayCount) === 0) {
-    noForwardUsers.push({
-      id: userId,
-      name: user.name
-    });
-  }
-}
 
   if (noForwardUsers.length === 0) return;
 
-  // 分批发送
+  // 分批发送（每10人一组）
   const chunkSize = 10;
-
   for (let i = 0; i < noForwardUsers.length; i += chunkSize) {
     const chunk = noForwardUsers.slice(i, i + chunkSize);
+    let mentions = chunk.map(u => `<a href="tg://user?id=${u.id}">${u.name}</a>`).join(" ");
 
-    let mentions = chunk
-      .map(u => `<a href="tg://user?id=${u.id}">${u.name}</a>`)
-      .join(" ");
-
+    // 按照你要求的格式发送
     const text =
       `📢 转发任务提醒\n\n` +
       `👤 用户：${mentions}\n` +
@@ -148,6 +137,7 @@ for (let userId in stats[month]) {
     await sendMessage(GROUP_ID, text);
   }
 }
+
 // ====== webhook 测试 ======
 app.get("/", (req, res) => {
   res.send("🤖 Bot is running");
@@ -305,37 +295,49 @@ let lastRunNoon = "";
 
 setInterval(() => {
   const now = new Date();
-  now.setMinutes(now.getMinutes() + 390); // 转换缅甸时间
+  const mmNow = new Date(now.getTime() + 390 * 60000); // 统一转换缅甸时间
 
-  const hour = now.getHours();
-  const minute = now.getMinutes();
-  const day = now.getDate(); // 获取今天是几号
+  const hour = mmNow.getHours();
+  const minute = mmNow.getMinutes();
   const today = getDate(0);
 
-  // 1. 正常的每日中午检查（12:00）
   if (hour === 12 && minute === 0 && lastRunNoon !== today) {
     console.log("☀️ 执行每日转发与加班检查...");
     
+    // 1. 发送转发提醒 (已使用新逻辑)
     checkNoForwardUsers(); 
 
+    // 2. 处理加班逻辑 (5秒后执行，确保数据读取不冲突)
     setTimeout(async () => {
       let stats = readData();
       const yesterday = getDate(-1);
       const month = today.slice(0, 7);
+      
+      // 计算昨日 18:30 的时间戳
+      const yesterday1830 = new Date(mmNow);
+      yesterday1830.setDate(yesterday1830.getDate() - 1);
+      yesterday1830.setHours(18, 30, 0, 0);
+      const startTime = yesterday1830.getTime();
 
       if (!stats[month]) return;
       if (!stats["overtime"]) stats["overtime"] = {};
 
       let notifyList = [];
+      const history = stats["history"] || {};
 
       for (let userId in stats[month]) {
-        const todayCount = stats[today]?.[userId]?.count || 0;
-        const yesterdayCount = stats[yesterday]?.[userId]?.count || 0;
+        // 【统一逻辑】：检查昨天 18:30 以后是否有转发记录
+        const hasForwarded = Object.values(history).some(record => 
+          record.userId === userId && record.timestamp >= startTime
+        );
 
-        if ((todayCount + yesterdayCount) !== 0) continue;
+        // 如果转过了，跳过，不计入加班
+        if (hasForwarded) continue;
 
         const userName = stats[month][userId].name;
         const last = stats["overtime"][userId];
+        
+        // 判定连续性：如果昨天就在加班名单里，则累计
         let streak = (last && last.lastDate === yesterday) ? last.streak + 1 : 1;
 
         stats["overtime"][userId] = { streak, lastDate: today };
@@ -352,11 +354,5 @@ setInterval(() => {
     }, 5000);
 
     lastRunNoon = today;
-  }
-
-  // 2. ✅ 每月 1 号凌晨的静默处理（可选）
-  if (day === 1 && hour === 0 && minute === 1) {
-    // 此时 getDate(0) 会返回 "2026-04-01"，主逻辑会自动开始记录新月份，无需手动删数据
-    console.log("📅 跨月检测：新月份统计已自动开启");
   }
 }, 60000);
