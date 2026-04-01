@@ -291,68 +291,71 @@ app.listen(PORT, () => {
 });
 
 // ====== 每天定时检查 ======
-let lastRunNoon = "";
+let lastRunDate = ""; 
 
-setInterval(() => {
+setInterval(async () => {
   const now = new Date();
-  const mmNow = new Date(now.getTime() + 390 * 60000); // 统一转换缅甸时间
+  // 核心修正：强制计算缅甸时间 (UTC+6:30)，不论服务器在哪里
+  const mmNow = new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + (390 * 60000));
 
   const hour = mmNow.getHours();
-  const minute = mmNow.getMinutes();
   const today = getDate(0);
 
-  if (hour === 12 && minute === 0 && lastRunNoon !== today) {
-    console.log("☀️ 执行每日转发与加班检查...");
+  // 只要到了中午 12 点，且今天还没跑过任务
+  if (hour === 12 && lastRunDate !== today) {
+    lastRunDate = today; // 立即锁定，防止重复执行
+    console.log(`☀️ [${today} 12:00] 缅甸时间中午12点，开始执行检查...`);
     
-    // 1. 发送转发提醒 (已使用新逻辑)
-    checkNoForwardUsers(); 
+    try {
+      // 1. 发送未转发提醒
+      await checkNoForwardUsers(); 
 
-    // 2. 处理加班逻辑 (5秒后执行，确保数据读取不冲突)
-    setTimeout(async () => {
-      let stats = readData();
-      const yesterday = getDate(-1);
-      const month = today.slice(0, 7);
-      
-      // 计算昨日 18:30 的时间戳
-      const yesterday1830 = new Date(mmNow);
-      yesterday1830.setDate(yesterday1830.getDate() - 1);
-      yesterday1830.setHours(18, 30, 0, 0);
-      const startTime = yesterday1830.getTime();
-
-      if (!stats[month]) return;
-      if (!stats["overtime"]) stats["overtime"] = {};
-
-      let notifyList = [];
-      const history = stats["history"] || {};
-
-      for (let userId in stats[month]) {
-        // 【统一逻辑】：检查昨天 18:30 以后是否有转发记录
-        const hasForwarded = Object.values(history).some(record => 
-          record.userId === userId && record.timestamp >= startTime
-        );
-
-        // 如果转过了，跳过，不计入加班
-        if (hasForwarded) continue;
-
-        const userName = stats[month][userId].name;
-        const last = stats["overtime"][userId];
+      // 2. 处理加班逻辑（延迟5秒，防止文件读写冲突）
+      setTimeout(async () => {
+        let stats = readData();
+        const yesterday = getDate(-1);
+        const month = today.slice(0, 7);
         
-        // 判定连续性：如果昨天就在加班名单里，则累计
-        let streak = (last && last.lastDate === yesterday) ? last.streak + 1 : 1;
+        // 计算昨日 18:30 的时间戳（作为判定标准）
+        const yesterday1830 = new Date(mmNow);
+        yesterday1830.setDate(yesterday1830.getDate() - 1);
+        yesterday1830.setHours(18, 30, 0, 0);
+        const startTime = yesterday1830.getTime();
 
-        stats["overtime"][userId] = { streak, lastDate: today };
+        if (!stats[month]) return;
+        if (!stats["overtime"]) stats["overtime"] = {};
 
-        let otText = streak === 1 ? "加班30分钟" : (streak === 2 ? "加班1小时" : "加班2小时");
-        notifyList.push(`${userName}（第${streak}次）${otText}`);
-      }
+        let notifyList = [];
+        const history = stats["history"] || {};
 
-      writeData(stats);
+        for (let userId in stats[month]) {
+          // 判定逻辑：检查昨天 18:30 以后是否有转发记录
+          const hasForwarded = Object.values(history).some(record => 
+            record.userId === userId && record.timestamp >= startTime
+          );
 
-      if (notifyList.length > 0) {
-        await sendMessage(LATE_GROUP_ID, "🚨 加班通知\n\n" + notifyList.join("\n") + "\n\n⚠ 连续才累计，断一天重置");
-      }
-    }, 5000);
+          if (hasForwarded) continue; // 转过的跳过
 
-    lastRunNoon = today;
+          const userName = stats[month][userId].name;
+          const last = stats["overtime"][userId];
+          
+          // 累计加班天数
+          let streak = (last && last.lastDate === yesterday) ? last.streak + 1 : 1;
+          stats["overtime"][userId] = { streak, lastDate: today };
+
+          let otText = streak === 1 ? "加班30分钟" : (streak === 2 ? "加班1小时" : "加班2小时");
+          notifyList.push(`${userName}（第${streak}次）${otText}`);
+        }
+
+        writeData(stats);
+
+        if (notifyList.length > 0) {
+          await sendMessage(LATE_GROUP_ID, "🚨 加班通知\n\n" + notifyList.join("\n") + "\n\n⚠ 连续才累计，断一天重置");
+        }
+      }, 5000);
+
+    } catch (err) {
+      console.error("❌ 定时任务执行失败:", err);
+    }
   }
-}, 60000);
+}, 30000); // 每 30 秒检查一次，确保不漏掉 12:00 窗口
