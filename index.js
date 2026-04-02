@@ -75,17 +75,16 @@ async function sendMessage(chatId, text) {
     console.error("❌ sendMessage 报错:", e);
   }
 }
-// ====== 检查未转发用户 ======
+// ====== 检查未转发用户 (修复版) ======
 async function checkNoForwardUsers() {
   const now = new Date();
-  // 转换为缅甸时间进行计算
-  const mmNow = new Date(now.getTime() + 390 * 60000); 
   
-  // 1. 计算昨天 18:30 的时间戳
-  const yesterday1830 = new Date(mmNow);
-  yesterday1830.setDate(yesterday1830.getDate() - 1);
-  yesterday1830.setHours(18, 30, 0, 0);
-  const startTime = yesterday1830.getTime();
+  // 1. 获取当前服务器绝对时间戳
+  const currentTs = now.getTime(); 
+  
+  // 2. 计算“17.5小时前”的绝对时间戳 (从中午12:00倒推到昨天18:30，正好是17.5小时)
+  // 17.5 * 60 * 60 * 1000 = 63000000 毫秒
+  const startTime = currentTs - 63000000;
 
   const today = getDate(0);
   const month = today.slice(0, 7);
@@ -93,7 +92,7 @@ async function checkNoForwardUsers() {
   let stats = readData();
   if (!stats[month]) return;
 
-  // 获取管理员（跳过管理员）
+  // 获取管理员
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getChatAdministrators?chat_id=${GROUP_ID}`);
   const adminData = await res.json();
   let adminIds = adminData.ok ? adminData.result.map(a => a.user.id.toString()) : [];
@@ -101,16 +100,14 @@ async function checkNoForwardUsers() {
   let noForwardUsers = [];
   const history = stats["history"] || {};
 
-  // 遍历本月所有活跃用户
   for (let userId in stats[month]) {
     if (adminIds.includes(userId)) continue;
 
-    // 【核心逻辑】：在 history 中寻找该用户在昨天 18:30 之后的转发记录
+    // 关键修正：直接用绝对时间戳比对，不管服务器在哪个时区
     const hasForwarded = Object.values(history).some(record => 
       record.userId === userId && record.timestamp >= startTime
     );
 
-    // 如果在此期间没有任何记录，则加入未转发名单
     if (!hasForwarded) {
       noForwardUsers.push({
         id: userId,
@@ -121,13 +118,11 @@ async function checkNoForwardUsers() {
 
   if (noForwardUsers.length === 0) return;
 
-  // 分批发送（每10人一组）
   const chunkSize = 10;
   for (let i = 0; i < noForwardUsers.length; i += chunkSize) {
     const chunk = noForwardUsers.slice(i, i + chunkSize);
     let mentions = chunk.map(u => `<a href="tg://user?id=${u.id}">${u.name}</a>`).join(" ");
 
-    // 按照你要求的格式发送
     const text =
       `📢 转发任务提醒\n\n` +
       `👤 用户：${mentions}\n` +
