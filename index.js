@@ -122,12 +122,13 @@ async function checkNoForwardUsers() {
   for (let i = 0; i < noForwardUsers.length; i += chunkSize) {
     const chunk = noForwardUsers.slice(i, i + chunkSize);
     let mentions = chunk.map(u => `<a href="tg://user?id=${u.id}">${u.name}</a>`).join(" ");
-
-    	
-
+    
+    // ✅ 补全缺失的 text 定义
+    const text = `🚨 <b>未转发任务名单：</b>\n\n${mentions}\n\n请尽快完成转发任务！`;
+    
     await sendMessage(GROUP_ID, text);
   }
-}
+} // 闭合 checkNoForwardUsers 函数
 
 // ====== webhook 测试 ======
 app.get("/", (req, res) => {
