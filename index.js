@@ -213,24 +213,38 @@ if (
     }
 
 // ====== 只统计转发 ======
-    // ====== 只统计转发 ======
 if (msg.forward_date) {
   const userId = msg.from.id.toString();
   const userName = msg.from.username || `${msg.from.first_name || ""} ${msg.from.last_name || ""}`.trim();
   
-  // 1. 生成消息指纹（用于查重：防止不同人转发同一个东西）
+  // 1. 生成消息指纹（查重用）
   const msgFingerprint = msg.forward_from_chat 
     ? `${msg.forward_from_chat.id}_${msg.forward_from_message_id}`
     : `anon_${msg.forward_date}`;
 
-  // 2. 获取媒体组ID（用于多图合并：防止同一人一次转发多图算多次任务）
+  // 2. 获取媒体组ID（合并多图用）
   const mediaGroupId = msg.media_group_id; 
 
   if (!stats["history"]) stats["history"] = {};
-  if (!stats["media_groups"]) stats["media_groups"] = {}; // 新增：用于记录已处理的媒体组
+  if (!stats["media_groups"]) stats["media_groups"] = {}; 
 
-  // --- 检查 A：是否是别人发过的重复内容 ---
-  if (stats["history"][msgFingerprint]) {
+  // --- 步骤 1：判定是不是同一批转发的多张图 ---
+  let isNewTask = true;
+  if (mediaGroupId) {
+    if (stats["media_groups"][mediaGroupId]) {
+      // 🔴 关键：如果是同一批图的后续图片，直接静默退出，不走下面的查重逻辑
+      isNewTask = false; 
+    } else {
+      // 记录下这个媒体组，后续的图片看到它就知道是“旧任务”了
+      stats["media_groups"][mediaGroupId] = {
+        userId: userId,
+        timestamp: Date.now()
+      };
+    }
+  }
+
+  // --- 步骤 2：查重逻辑 (只有是“新任务”时才查重，防止刷屏) ---
+  if (isNewTask && stats["history"][msgFingerprint]) {
     const record = stats["history"][msgFingerprint];
     const prevDate = new Date(record.timestamp);
     const timeStr = prevDate.toLocaleString('en-GB', { timeZone: 'Asia/Yangon' });
@@ -245,29 +259,14 @@ if (msg.forward_date) {
     return res.send("ok");
   }
 
-  // --- 检查 B：是否是同一批转发的多张图 (核心修复) ---
-  let isNewTask = true;
-  if (mediaGroupId) {
-    if (stats["media_groups"][mediaGroupId]) {
-      // 如果这个媒体组ID已经存在，说明是同一批图的第2,3,4张
-      isNewTask = false; 
-    } else {
-      // 如果是第一次见这个媒体组ID，记录下来
-      stats["media_groups"][mediaGroupId] = {
-        userId: userId,
-        timestamp: Date.now()
-      };
-    }
-  }
-
-  // 存入全局指纹库（无论是不是多图中的一张，都要存，防止别人拿其中一张去偷跑）
+  // --- 步骤 3：记录指纹 (无论是不是多图，都记入历史，防止别人偷其中一张图去发) ---
   stats["history"][msgFingerprint] = {
     userId: userId,
     userName: userName,
     timestamp: Date.now()
   };
 
-  // --- 只有是新任务时才加分和发消息 ---
+  // --- 步骤 4：统计加分 (只有真正的新任务才发消息) ---
   if (isNewTask) {
     stats[today][userId].count += 1;
     stats[month][userId].count += 1;
@@ -287,7 +286,7 @@ if (msg.forward_date) {
 
     await sendMessage(chatId, text);
   } else {
-    // 如果是多图中的后续图片，只保存数据不发消息
+    // 后续图片只存数据，不回话
     writeData(stats);
   }
 }
