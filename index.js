@@ -291,6 +291,14 @@ if (msg.forward_date) {
     writeData(stats);
   }
 }
+// 🔴 --- 下面是你要补全的内容 --- 🔴
+    res.send("ok");
+  } catch (e) {
+    console.error("❌ 主逻辑错误:", e);
+    res.send("ok");
+  }
+}); 
+// 🔴 --- 补全结束 --- 🔴
 
 // ====== 启动 ======
 const PORT = process.env.PORT || 3000;
