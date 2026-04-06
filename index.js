@@ -123,11 +123,7 @@ async function checkNoForwardUsers() {
     const chunk = noForwardUsers.slice(i, i + chunkSize);
     let mentions = chunk.map(u => `<a href="tg://user?id=${u.id}">${u.name}</a>`).join(" ");
 
-    const text =
-      `📢 转发任务提醒\n\n` +
-      `👤 用户：${mentions}\n` +
-      `📅 日期：${today}\n` +
-      `🌅 今日： No Effective`;
+    	
 
     await sendMessage(GROUP_ID, text);
   }
@@ -216,67 +212,84 @@ if (
     }
 
 // ====== 只统计转发 ======
-    if (msg.forward_date) {
-      // 生成消息指纹：原频道ID + 原消息ID (如果是匿名转发，则使用 forward_date)
-      const msgFingerprint = msg.forward_from_chat 
-        ? `${msg.forward_from_chat.id}_${msg.forward_from_message_id}`
-        : `anon_${msg.forward_date}`;
+    // ====== 只统计转发 ======
+if (msg.forward_date) {
+  const userId = msg.from.id.toString();
+  const userName = msg.from.username || `${msg.from.first_name || ""} ${msg.from.last_name || ""}`.trim();
+  
+  // 1. 生成消息指纹（用于查重：防止不同人转发同一个东西）
+  const msgFingerprint = msg.forward_from_chat 
+    ? `${msg.forward_from_chat.id}_${msg.forward_from_message_id}`
+    : `anon_${msg.forward_date}`;
 
-      // 初始化全局查重库
-      if (!stats["history"]) stats["history"] = {};
+  // 2. 获取媒体组ID（用于多图合并：防止同一人一次转发多图算多次任务）
+  const mediaGroupId = msg.media_group_id; 
 
-      // 检查是否已存在
-      if (stats["history"][msgFingerprint]) {
-        const record = stats["history"][msgFingerprint];
-        const prevDate = new Date(record.timestamp);
-        // 格式化时间为：2024-05-20 14:30:05
-        const timeStr = prevDate.toLocaleString('en-GB', { timeZone: 'Asia/Yangon' });
+  if (!stats["history"]) stats["history"] = {};
+  if (!stats["media_groups"]) stats["media_groups"] = {}; // 新增：用于记录已处理的媒体组
 
-        const warningText = 
-          `⚠ <b>Duplicate Forward Detected</b>\n\n` +
-          `This message was already forwarded by:\n` +
-          `👤 <b>User:</b> ${record.userName}\n` +
-          `⏰ <b>Time:</b> ${timeStr}\n\n` +
-          `<i>Please do not forward the same message twice.</i>`;
+  // --- 检查 A：是否是别人发过的重复内容 ---
+  if (stats["history"][msgFingerprint]) {
+    const record = stats["history"][msgFingerprint];
+    const prevDate = new Date(record.timestamp);
+    const timeStr = prevDate.toLocaleString('en-GB', { timeZone: 'Asia/Yangon' });
 
-        await sendMessage(chatId, warningText);
-        return res.send("ok");
-      }
+    const warningText = 
+      `⚠ <b>Duplicate Forward Detected</b>\n\n` +
+      `This message was already forwarded by:\n` +
+      `👤 <b>User:</b> ${record.userName}\n` +
+      `⏰ <b>Time:</b> ${timeStr}`;
 
-      // 如果是新转发，记录下来
-      stats[today][userId].count += 1;
-      stats[month][userId].count += 1;
-      
-      // 存入查重库
-      stats["history"][msgFingerprint] = {
+    await sendMessage(chatId, warningText);
+    return res.send("ok");
+  }
+
+  // --- 检查 B：是否是同一批转发的多张图 (核心修复) ---
+  let isNewTask = true;
+  if (mediaGroupId) {
+    if (stats["media_groups"][mediaGroupId]) {
+      // 如果这个媒体组ID已经存在，说明是同一批图的第2,3,4张
+      isNewTask = false; 
+    } else {
+      // 如果是第一次见这个媒体组ID，记录下来
+      stats["media_groups"][mediaGroupId] = {
         userId: userId,
-        userName: userName,
         timestamp: Date.now()
       };
-
-      writeData(stats);
-
-      const todayCount = stats[today][userId].count;
-      const yesterdayCount = stats[yesterday]?.[userId]?.count || 0;
-      const monthCount = stats[month][userId].count;
-
-      const userTag = `${userName} (${userId})`;
-
-      const text =
-        `👤 User: ${userTag}\n` +
-        `📅 Date: ${today}\n` +
-        `🌅 Today: ${todayCount}\n` +
-        `🌃 Yesterday: ${yesterdayCount}\n` +
-        `🧮 Month: ${monthCount}`;
-
-      await sendMessage(chatId, text);
     }
-    res.send("ok");
-  } catch (e) {
-    console.error("❌ 主逻辑报错:", e);
-    res.send("error");
   }
-});
+
+  // 存入全局指纹库（无论是不是多图中的一张，都要存，防止别人拿其中一张去偷跑）
+  stats["history"][msgFingerprint] = {
+    userId: userId,
+    userName: userName,
+    timestamp: Date.now()
+  };
+
+  // --- 只有是新任务时才加分和发消息 ---
+  if (isNewTask) {
+    stats[today][userId].count += 1;
+    stats[month][userId].count += 1;
+    
+    writeData(stats);
+
+    const todayCount = stats[today][userId].count;
+    const yesterdayCount = stats[yesterday]?.[userId]?.count || 0;
+    const monthCount = stats[month][userId].count;
+
+    const text =
+      `👤 User: ${userName} (${userId})\n` +
+      `📅 Date: ${today}\n` +
+      `🌅 Today: ${todayCount}\n` +
+      `🌃 Yesterday: ${yesterdayCount}\n` +
+      `🧮 Month: ${monthCount}`;
+
+    await sendMessage(chatId, text);
+  } else {
+    // 如果是多图中的后续图片，只保存数据不发消息
+    writeData(stats);
+  }
+}
 
 // ====== 启动 ======
 const PORT = process.env.PORT || 3000;
