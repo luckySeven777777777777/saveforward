@@ -124,7 +124,7 @@ async function checkNoForwardUsers() {
     let mentions = chunk.map(u => `<a href="tg://user?id=${u.id}">${u.name}</a>`).join(" ");
     
     // ✅ 补全缺失的 text 定义
-    const text = `🚨 <b>未转发任务名单：</b>\n\n${mentions}\n\n请尽快完成转发任务！`;
+    const text = `🚨 <b>未转发任务名单（No Effective）：</b>\n\n${mentions}\n\nPlease complete the forwarding task as soon as possible!（请尽快完成转发任务！）`;
     
     await sendMessage(GROUP_ID, text);
   }
