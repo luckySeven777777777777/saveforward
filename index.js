@@ -37,21 +37,22 @@ function writeData(data) {
 }
 
 // ====== 获取日期 ======
-// 新增助手函数，确保获取的是纯正的缅甸时间对象
-function getMyanmarTime() {
+function getMMDate(offset = 0) {
   const now = new Date();
-  return new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + (390 * 60000));
-}
+  // 强制获取缅甸当前时间字符串
+  const mmStr = now.toLocaleString("en-GB", { timeZone: "Asia/Yangon" });
+  const [datePart] = mmStr.split(", ");
+  const [d, m, y] = datePart.split("/");
 
-function getDate(offset = 0) {
-  const d = getMyanmarTime(); // 使用统一的缅甸时间源
-  d.setDate(d.getDate() + offset);
-
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
+  if (offset !== 0) {
+    const dateObj = new Date(`${y}-${m}-${d}T12:00:00Z`);
+    dateObj.setDate(dateObj.getDate() + offset);
+    const ny = dateObj.getUTCFullYear();
+    const nm = String(dateObj.getUTCMonth() + 1).padStart(2, "0");
+    const nd = String(dateObj.getUTCDate()).padStart(2, "0");
+    return { full: `${ny}-${nm}-${nd}`, month: `${ny}-${nm}` };
+  }
+  return { full: `${y}-${m}-${d}`, month: `${y}-${m}` };
 }
 // ====== 发送消息 ======
 async function sendMessage(chatId, text) {
@@ -78,18 +79,23 @@ async function sendMessage(chatId, text) {
   }
 }
 // ====== 检查未转发用户 (修复版) ======
-// ====== 检查未转发用户 (修正版) ======
 async function checkNoForwardUsers() {
-  const mmNow = getMyanmarTime(); // 统一使用缅甸时间源
-  const currentTs = Date.now(); 
+  const now = new Date();
+  
+  // 1. 获取当前服务器绝对时间戳
+  const currentTs = now.getTime(); 
+  
+  // 2. 计算“17.5小时前”的绝对时间戳 (从中午12:00倒推到昨天18:30，正好是17.5小时)
+  // 17.5 * 60 * 60 * 1000 = 63000000 毫秒
   const startTime = currentTs - 63000000;
 
-  const today = getDate(0);
-  // 修正：确保这里的 month 获取逻辑与主逻辑一致
-  const month = `${mmNow.getFullYear()}-${String(mmNow.getMonth() + 1).padStart(2, "0")}`;
+  const dateInfo = getMMDate(0);
+  const today = dateInfo.full;
+  const month = dateInfo.month;
 
   let stats = readData();
   if (!stats[month]) return;
+
   // 获取管理员
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getChatAdministrators?chat_id=${GROUP_ID}`);
   const adminData = await res.json();
@@ -148,12 +154,12 @@ app.post("/", async (req, res) => {
     }
 
     const chatId = GROUP_ID;
-    const mmNow = getMyanmarTime(); // 获取当前的缅甸时间
-    const today = getDate(0);
-    const yesterday = getDate(-1);
+    const dateInfo = getMMDate(0);
+    const yesterdayInfo = getMMDate(-1);
 
-// 直接从当前的缅甸时间对象获取年月，确保只有过了缅甸 24:00 才会变
-const month = `${mmNow.getFullYear()}-${String(mmNow.getMonth() + 1).padStart(2, "0")}`;
+    const today = dateInfo.full;      // 严格当天的缅甸日期
+    const month = dateInfo.month;    // 严格当月的缅甸月份[cite: 1]
+    const yesterday = yesterdayInfo.full;
 
     let stats = readData();
 // ====== 加班未完成提醒 ======
@@ -308,18 +314,20 @@ app.listen(PORT, () => {
 });
 
 // ====== 每天定时检查 ======
+// ====== 每天定时检查 ======
 let lastRunDate = ""; 
 
 setInterval(async () => {
   const now = new Date();
-  // 核心修正：强制计算缅甸时间 (UTC+6:30)，不论服务器在哪里
+  // 强制计算缅甸当前时间对象 (UTC+6.5)
   const mmNow = new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + (390 * 60000));
+  const currentHour = mmNow.getHours();
+  
+  const dateInfo = getMMDate(0); 
+  const today = dateInfo.full; 
 
-  const hour = mmNow.getHours();
-  const today = getDate(0);
-
-  // 只要到了中午 12 点，且今天还没跑过任务
-  if (hour === 12 && lastRunDate !== today) {
+  // ✅ 只要到了中午 12 点，且今天还没跑过任务
+  if (currentHour === 12 && lastRunDate !== today) {
     lastRunDate = today; // 立即锁定，防止重复执行
     console.log(`☀️ [${today} 12:00] 缅甸时间中午12点，开始执行检查...`);
     
@@ -330,15 +338,14 @@ setInterval(async () => {
       // 2. 处理加班逻辑（延迟5秒，防止文件读写冲突）
       setTimeout(async () => {
         let stats = readData();
-        const yesterday = getDate(-1);
-// 同样使用 mmNow 获取准确月份
-        const month = `${mmNow.getFullYear()}-${String(mmNow.getMonth() + 1).padStart(2, "0")}`;
+        const yesterdayInfo = getMMDate(-1);
+
+        const month = dateInfo.month;      // 严格获取当月
+        const yesterday = yesterdayInfo.full; // 严格获取昨天[cite: 2]
         
-        // 计算昨日 18:30 的时间戳（作为判定标准）
-        const yesterday1830 = new Date(mmNow);
-        yesterday1830.setDate(yesterday1830.getDate() - 1);
-        yesterday1830.setHours(18, 30, 0, 0);
-        const startTime = yesterday1830.getTime();
+        // 计算昨天 18:30 的时间戳（作为判定标准）
+        // 这里直接用当前缅甸时间对象减去 17.5 小时即可
+        const startTime = mmNow.getTime() - (17.5 * 60 * 60 * 1000);
 
         if (!stats[month]) return;
         if (!stats["overtime"]) stats["overtime"] = {};
@@ -347,12 +354,12 @@ setInterval(async () => {
         const history = stats["history"] || {};
 
         for (let userId in stats[month]) {
-          // 判定逻辑：检查昨天 18:30 以后是否有转发记录
+          // 判定逻辑：检查 17.5 小时内是否有转发记录
           const hasForwarded = Object.values(history).some(record => 
             record.userId === userId && record.timestamp >= startTime
           );
 
-          if (hasForwarded) continue; // 转过的跳过
+          if (hasForwarded) continue; 
 
           const userName = stats[month][userId].name;
           const last = stats["overtime"][userId];
@@ -376,4 +383,4 @@ setInterval(async () => {
       console.error("❌ 定时任务执行失败:", err);
     }
   }
-}, 30000); // 每 30 秒检查一次，确保不漏掉 12:00 窗口
+}, 30000); // 每 30 秒检查一次
