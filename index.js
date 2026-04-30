@@ -137,29 +137,33 @@ app.get("/", (req, res) => {
 app.post("/", async (req, res) => {
   try {
     const msg = req.body.message;
-    if (!msg) return res.send("ok");
+    if (!msg || !msg.chat) return res.send("ok");
 
-    // 1. 统一获取当前的缅甸时间字符串
-    const today = getDate(0);      // 确保这里返回的是 "2026-04-30"
+    // ✅ 核心修复：定义 chatId
+    const chatId = msg.chat.id.toString(); 
+    const userId = msg.from.id.toString();
+    const userName = msg.from.username || `${msg.from.first_name || ""} ${msg.from.last_name || ""}`.trim();
+
+    // 1. 获取日期
+    const today = getDate(0);      
     const yesterday = getDate(-1);
-    
-    // 2. 这里的 month 必须严格从 today 字符串截取，不要用 new Date().getMonth()
     const month = today.slice(0, 7); 
 
     let stats = readData();
-// ====== 加班未完成提醒 ======
-const userId = msg.from.id.toString();
-const overtime = stats["overtime"] || {};
-const userOvertime = overtime[userId];
 
-const textMsg = msg.text || "";
-const lower = textMsg.toLowerCase();
+    // 2. 加班检查逻辑 (这里现在可以使用 chatId 了)
+    const overtime = stats["overtime"] || {};
+    const userOvertime = overtime[userId];
+    const textMsg = msg.text || "";
+    const lower = textMsg.toLowerCase();
 
-if (userOvertime && (textMsg.includes("Check Out") || lower === "bye")) {
+   if (userOvertime && (textMsg.includes("Check Out") || lower === "bye")) {
   const now = new Date();
-  // 注意：这里的 now.getHours() 是服务器本地时间，建议统一用缅甸时间
-  const currentHour = now.getHours(); 
-  const currentMinute = now.getMinutes();
+  // ✅ 核心修正：使用缅甸偏移时间
+  const mmNow = new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + (390 * 60000));
+  
+  const currentHour = mmNow.getHours();  // 使用缅甸小时
+  const currentMinute = mmNow.getMinutes();
 
   let requiredMinutes = 0;
 
@@ -278,10 +282,10 @@ if (msg.forward_date) {
 // 🔴 --- 下面是你要补全的内容 --- 🔴
     res.send("ok");
   } catch (e) {
-    console.error("❌ 主逻辑错误:", e);
+    console.error("❌ 捕捉到错误:", e); // 这行会在日志里显示具体哪里错了
     res.send("ok");
   }
-}); 
+});
 // 🔴 --- 补全结束 --- 🔴
 
 // ====== 启动 ======
