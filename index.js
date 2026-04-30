@@ -37,22 +37,29 @@ function writeData(data) {
 }
 
 // ====== 获取日期 ======
+// ====== 修改后的日期函数 ======
 function getMMDate(offset = 0) {
   const now = new Date();
-  // 强制获取缅甸当前时间字符串
+  // 1. 强制获取缅甸当前时间
   const mmStr = now.toLocaleString("en-GB", { timeZone: "Asia/Yangon" });
   const [datePart] = mmStr.split(", ");
   const [d, m, y] = datePart.split("/");
 
+  // 2. 无论是否有 offset，都严格控制返回格式
+  const dateObj = new Date(`${y}-${m}-${d}T12:00:00Z`);
   if (offset !== 0) {
-    const dateObj = new Date(`${y}-${m}-${d}T12:00:00Z`);
-    dateObj.setDate(dateObj.getDate() + offset);
-    const ny = dateObj.getUTCFullYear();
-    const nm = String(dateObj.getUTCMonth() + 1).padStart(2, "0");
-    const nd = String(dateObj.getUTCDate()).padStart(2, "0");
-    return { full: `${ny}-${nm}-${nd}`, month: `${ny}-${nm}` };
+    dateObj.setUTCDate(dateObj.getUTCDate() + offset);
   }
-  return { full: `${y}-${m}-${d}`, month: `${y}-${m}` };
+  
+  const ny = dateObj.getUTCFullYear();
+  const nm = String(dateObj.getUTCMonth() + 1).padStart(2, "0");
+  const nd = String(dateObj.getUTCDate()).padStart(2, "0");
+
+  // ✅ 核心修正：month 必须返回 YYYY-MM 格式，不能带后面的天数
+  return { 
+    full: `${ny}-${nm}-${nd}`, 
+    month: `${ny}-${nm}` 
+  };
 }
 // ====== 发送消息 ======
 async function sendMessage(chatId, text) {
