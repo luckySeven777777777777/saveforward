@@ -78,22 +78,18 @@ async function sendMessage(chatId, text) {
   }
 }
 // ====== 检查未转发用户 (修复版) ======
+// ====== 检查未转发用户 (修正版) ======
 async function checkNoForwardUsers() {
-  const now = new Date();
-  
-  // 1. 获取当前服务器绝对时间戳
-  const currentTs = now.getTime(); 
-  
-  // 2. 计算“17.5小时前”的绝对时间戳 (从中午12:00倒推到昨天18:30，正好是17.5小时)
-  // 17.5 * 60 * 60 * 1000 = 63000000 毫秒
+  const mmNow = getMyanmarTime(); // 统一使用缅甸时间源
+  const currentTs = Date.now(); 
   const startTime = currentTs - 63000000;
 
   const today = getDate(0);
-  const month = today.slice(0, 7);
+  // 修正：确保这里的 month 获取逻辑与主逻辑一致
+  const month = `${mmNow.getFullYear()}-${String(mmNow.getMonth() + 1).padStart(2, "0")}`;
 
   let stats = readData();
   if (!stats[month]) return;
-
   // 获取管理员
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getChatAdministrators?chat_id=${GROUP_ID}`);
   const adminData = await res.json();
