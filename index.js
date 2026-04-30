@@ -37,9 +37,14 @@ function writeData(data) {
 }
 
 // ====== 获取日期 ======
+// 新增助手函数，确保获取的是纯正的缅甸时间对象
+function getMyanmarTime() {
+  const now = new Date();
+  return new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + (390 * 60000));
+}
+
 function getDate(offset = 0) {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() + 390); // ✅ 这里加了 6.5 小时
+  const d = getMyanmarTime(); // 使用统一的缅甸时间源
   d.setDate(d.getDate() + offset);
 
   const year = d.getFullYear();
@@ -75,26 +80,21 @@ async function sendMessage(chatId, text) {
 // ====== 检查未转发用户 (修复版) ======
 async function checkNoForwardUsers() {
   const now = new Date();
-  const mmNow = new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + (390 * 60000));
   
-  let todayStr = getDate(0);
-  let targetMonth = todayStr.slice(0, 7); 
+  // 1. 获取当前服务器绝对时间戳
+  const currentTs = now.getTime(); 
+  
+  // 2. 计算“17.5小时前”的绝对时间戳 (从中午12:00倒推到昨天18:30，正好是17.5小时)
+  // 17.5 * 60 * 60 * 1000 = 63000000 毫秒
+  const startTime = currentTs - 63000000;
 
-  // 1号中午检查时，切换到上个月
-  if (mmNow.getDate() === 1) {
-    const lastMonthDate = new Date(mmNow);
-    lastMonthDate.setDate(0); 
-    targetMonth = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, "0")}`;
-    console.log(`📅 结算上月数据: ${targetMonth}`);
-  }
+  const today = getDate(0);
+  const month = today.slice(0, 7);
 
   let stats = readData();
-  if (!stats[targetMonth]) return; 
+  if (!stats[month]) return;
 
-  // ✅ 修复 1：定义 startTime (17.5小时 = 63,000,000ms)
-  const startTime = Date.now() - 63000000;
-
-  // 获取管理员... (此处省略fetch代码)
+  // 获取管理员
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getChatAdministrators?chat_id=${GROUP_ID}`);
   const adminData = await res.json();
   let adminIds = adminData.ok ? adminData.result.map(a => a.user.id.toString()) : [];
@@ -102,18 +102,22 @@ async function checkNoForwardUsers() {
   let noForwardUsers = [];
   const history = stats["history"] || {};
 
-  // ✅ 修复 2：使用 targetMonth 进行循环
-  for (let userId in stats[targetMonth]) { 
+  for (let userId in stats[month]) {
     if (adminIds.includes(userId)) continue;
 
+    // 关键修正：直接用绝对时间戳比对，不管服务器在哪个时区
     const hasForwarded = Object.values(history).some(record => 
       record.userId === userId && record.timestamp >= startTime
     );
 
     if (!hasForwarded) {
-      noForwardUsers.push({ id: userId, name: stats[targetMonth][userId].name });
+      noForwardUsers.push({
+        id: userId,
+        name: stats[month][userId].name
+      });
     }
   }
+
   if (noForwardUsers.length === 0) return;
 
   const chunkSize = 10;
@@ -136,34 +140,45 @@ app.get("/", (req, res) => {
 // ====== 主逻辑 ======
 app.post("/", async (req, res) => {
   try {
+    console.log("📩 收到更新:", JSON.stringify(req.body));
+
     const msg = req.body.message;
-    if (!msg || !msg.chat) return res.send("ok");
+    if (!msg) return res.send("ok");
 
-    // ✅ 核心修复：定义 chatId
-    const chatId = msg.chat.id.toString(); 
-    const userId = msg.from.id.toString();
-    const userName = msg.from.username || `${msg.from.first_name || ""} ${msg.from.last_name || ""}`.trim();
+    // ⚠️ 群判断（字符串）
+    if (msg.chat.id.toString() !== GROUP_ID) {
+      console.log("⛔ 非目标群:", msg.chat.id);
+      return res.send("ok");
+    }
 
-    // 1. 获取日期
-    const today = getDate(0);      
+    const chatId = GROUP_ID;
+    const mmNow = getMyanmarTime(); // 获取当前的缅甸时间
+    const today = getDate(0);
     const yesterday = getDate(-1);
-    const month = today.slice(0, 7); 
+
+// 直接从当前的缅甸时间对象获取年月，确保只有过了缅甸 24:00 才会变
+const month = `${mmNow.getFullYear()}-${String(mmNow.getMonth() + 1).padStart(2, "0")}`;
 
     let stats = readData();
+// ====== 加班未完成提醒 ======
+const userId = msg.from.id.toString();
+const overtime = stats["overtime"] || {};
+const userOvertime = overtime[userId];
 
-    // 2. 加班检查逻辑 (这里现在可以使用 chatId 了)
-    const overtime = stats["overtime"] || {};
-    const userOvertime = overtime[userId];
-    const textMsg = msg.text || "";
-    const lower = textMsg.toLowerCase();
+const textMsg = msg.text || "";
+const lower = textMsg.toLowerCase();
 
-   if (userOvertime && (textMsg.includes("Check Out") || lower === "bye")) {
+if (
+  userOvertime &&
+  (
+    textMsg.includes("Check Out") ||
+    lower === "bye" ||
+    lower.includes("bye bye")
+  )
+) {
   const now = new Date();
-  // ✅ 核心修正：使用缅甸偏移时间
-  const mmNow = new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + (390 * 60000));
-  
-  const currentHour = mmNow.getHours();  // 使用缅甸小时
-  const currentMinute = mmNow.getMinutes();
+  const currentHour = now.getHours();
+  const currentMinute = now.getMinutes();
 
   let requiredMinutes = 0;
 
@@ -174,9 +189,10 @@ app.post("/", async (req, res) => {
   const start = 12 * 60;
   const nowMinutes = currentHour * 60 + currentMinute;
 
-   if (nowMinutes < start + requiredMinutes) {
-    // ✅ 修复 3：直接使用定义的 GROUP_ID
-    await sendMessage(GROUP_ID, "⚠ You haven't finished your overtime work yet...");
+  if (nowMinutes < start + requiredMinutes) {
+    await sendMessage(chatId,
+      "⚠ You haven't finished your overtime work yet, please continue working overtime ⚠"
+    );
   }
 }
     const userName =
@@ -282,10 +298,10 @@ if (msg.forward_date) {
 // 🔴 --- 下面是你要补全的内容 --- 🔴
     res.send("ok");
   } catch (e) {
-    console.error("❌ 捕捉到错误:", e); // 这行会在日志里显示具体哪里错了
+    console.error("❌ 主逻辑错误:", e);
     res.send("ok");
   }
-});
+}); 
 // 🔴 --- 补全结束 --- 🔴
 
 // ====== 启动 ======
@@ -319,7 +335,8 @@ setInterval(async () => {
       setTimeout(async () => {
         let stats = readData();
         const yesterday = getDate(-1);
-        const month = today.slice(0, 7);
+// 同样使用 mmNow 获取准确月份
+        const month = `${mmNow.getFullYear()}-${String(mmNow.getMonth() + 1).padStart(2, "0")}`;
         
         // 计算昨日 18:30 的时间戳（作为判定标准）
         const yesterday1830 = new Date(mmNow);
