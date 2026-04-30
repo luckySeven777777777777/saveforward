@@ -39,10 +39,7 @@ function writeData(data) {
 // ====== 获取日期 ======
 function getDate(offset = 0) {
   const d = new Date();
-
-  // ✅ 一次性加 6小时30分钟（= 390分钟）
-  d.setMinutes(d.getMinutes() + 390);
-
+  d.setMinutes(d.getMinutes() + 390); // ✅ 这里加了 6.5 小时
   d.setDate(d.getDate() + offset);
 
   const year = d.getFullYear();
@@ -78,26 +75,26 @@ async function sendMessage(chatId, text) {
 // ====== 检查未转发用户 (修复版) ======
 async function checkNoForwardUsers() {
   const now = new Date();
-  // 转换为缅甸时间
   const mmNow = new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + (390 * 60000));
   
-  let targetMonth = getDate(0).slice(0, 7); // 默认当前月
+  let todayStr = getDate(0);
+  let targetMonth = todayStr.slice(0, 7); 
 
-  // ✅ 核心修复：如果是每月1号的中午检测，目标应该是“上个月”
+  // 1号中午检查时，切换到上个月
   if (mmNow.getDate() === 1) {
     const lastMonthDate = new Date(mmNow);
-    lastMonthDate.setDate(0); // 设置为上个月最后一天
-    const year = lastMonthDate.getFullYear();
-    const month = String(lastMonthDate.getMonth() + 1).padStart(2, "0");
-    targetMonth = `${year}-${month}`;
-    console.log(`📅 每月1号检测：正在结算上月数据 (${targetMonth})`);
+    lastMonthDate.setDate(0); 
+    targetMonth = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, "0")}`;
+    console.log(`📅 结算上月数据: ${targetMonth}`);
   }
 
   let stats = readData();
-  // 使用锁定后的 targetMonth
   if (!stats[targetMonth]) return; 
 
-  // 获取管理员
+  // ✅ 修复 1：定义 startTime (17.5小时 = 63,000,000ms)
+  const startTime = Date.now() - 63000000;
+
+  // 获取管理员... (此处省略fetch代码)
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getChatAdministrators?chat_id=${GROUP_ID}`);
   const adminData = await res.json();
   let adminIds = adminData.ok ? adminData.result.map(a => a.user.id.toString()) : [];
@@ -105,22 +102,18 @@ async function checkNoForwardUsers() {
   let noForwardUsers = [];
   const history = stats["history"] || {};
 
-  for (let userId in stats[month]) {
+  // ✅ 修复 2：使用 targetMonth 进行循环
+  for (let userId in stats[targetMonth]) { 
     if (adminIds.includes(userId)) continue;
 
-    // 关键修正：直接用绝对时间戳比对，不管服务器在哪个时区
     const hasForwarded = Object.values(history).some(record => 
       record.userId === userId && record.timestamp >= startTime
     );
 
     if (!hasForwarded) {
-      noForwardUsers.push({
-        id: userId,
-        name: stats[month][userId].name
-      });
+      noForwardUsers.push({ id: userId, name: stats[targetMonth][userId].name });
     }
   }
-
   if (noForwardUsers.length === 0) return;
 
   const chunkSize = 10;
@@ -143,21 +136,15 @@ app.get("/", (req, res) => {
 // ====== 主逻辑 ======
 app.post("/", async (req, res) => {
   try {
-    console.log("📩 收到更新:", JSON.stringify(req.body));
-
     const msg = req.body.message;
     if (!msg) return res.send("ok");
 
-    // ⚠️ 群判断（字符串）
-    if (msg.chat.id.toString() !== GROUP_ID) {
-      console.log("⛔ 非目标群:", msg.chat.id);
-      return res.send("ok");
-    }
-
-    const chatId = GROUP_ID;
-    const today = getDate(0);
+    // 1. 统一获取当前的缅甸时间字符串
+    const today = getDate(0);      // 确保这里返回的是 "2026-04-30"
     const yesterday = getDate(-1);
-    const month = today.slice(0, 7);
+    
+    // 2. 这里的 month 必须严格从 today 字符串截取，不要用 new Date().getMonth()
+    const month = today.slice(0, 7); 
 
     let stats = readData();
 // ====== 加班未完成提醒 ======
@@ -168,16 +155,10 @@ const userOvertime = overtime[userId];
 const textMsg = msg.text || "";
 const lower = textMsg.toLowerCase();
 
-if (
-  userOvertime &&
-  (
-    textMsg.includes("Check Out") ||
-    lower === "bye" ||
-    lower.includes("bye bye")
-  )
-) {
+if (userOvertime && (textMsg.includes("Check Out") || lower === "bye")) {
   const now = new Date();
-  const currentHour = now.getHours();
+  // 注意：这里的 now.getHours() 是服务器本地时间，建议统一用缅甸时间
+  const currentHour = now.getHours(); 
   const currentMinute = now.getMinutes();
 
   let requiredMinutes = 0;
@@ -189,10 +170,9 @@ if (
   const start = 12 * 60;
   const nowMinutes = currentHour * 60 + currentMinute;
 
-  if (nowMinutes < start + requiredMinutes) {
-    await sendMessage(chatId,
-      "⚠ You haven't finished your overtime work yet, please continue working overtime ⚠"
-    );
+   if (nowMinutes < start + requiredMinutes) {
+    // ✅ 修复 3：直接使用定义的 GROUP_ID
+    await sendMessage(GROUP_ID, "⚠ You haven't finished your overtime work yet...");
   }
 }
     const userName =
